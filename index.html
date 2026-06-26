@@ -1411,6 +1411,10 @@
       background: var(--green);
       color: #fffaf3;
     }
+    .data-manager { padding: 1rem 0; }
+    .data-manager h4 { margin-bottom: 0.8rem; font-size: 0.95rem; color: var(--accent2); }
+    .data-manager .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .data-manager .btn-row button { flex: 1; min-width: 80px; font-size: 0.8rem; padding: 8px 4px; }
   </style>
 </head>
 <body>
@@ -2071,6 +2075,14 @@
               <div class="community-card">
                 <p>通知设置、隐私设置、账号管理等功能即将上线。</p>
               </div>
+              <div class="data-manager">
+                <h4>数据管理</h4>
+                <div class="btn-row">
+                  <button class="ghost" id="exportDataBtn">导出数据</button>
+                  <button class="primary" id="importDataBtn">导入数据</button>
+                  <button class="ghost" id="resetDataBtn">重置数据</button>
+                </div>
+              </div>
             </div>
 
             <div class="section-title"><h3>成长路径</h3></div>
@@ -2278,6 +2290,38 @@
   </div>
 
   <script>
+    // === 数据持久化模块 ===
+    const DB = {
+      KEY: 'coffee_bridge_data',
+      getAll() {
+        try { return JSON.parse(localStorage.getItem(this.KEY)) || {}; } catch(e) { return {}; }
+      },
+      save(key, data) {
+        const all = this.getAll();
+        all[key] = data;
+        localStorage.setItem(this.KEY, JSON.stringify(all));
+      },
+      get(key, def) {
+        const all = this.getAll();
+        return all[key] !== undefined ? all[key] : def;
+      },
+      exportAll() {
+        const data = localStorage.getItem(this.KEY);
+        if (!data) { showToast('没有可导出的数据'); return null; }
+        return data;
+      },
+      importAll(jsonStr) {
+        try {
+          JSON.parse(jsonStr);
+          localStorage.setItem(this.KEY, jsonStr);
+          return true;
+        } catch(e) { return false; }
+      },
+      clearAll() {
+        localStorage.removeItem(this.KEY);
+      }
+    };
+
     const tabs = document.querySelectorAll('.tab');
     const pages = document.querySelectorAll('.page');
     const toast = document.getElementById('toast');
@@ -2405,6 +2449,20 @@
         drawRadar();
 
         showToast('AI 方案已生成');
+
+        // 保存冲煮记录
+        const brewRecords = DB.get('brewHistory', []);
+        brewRecords.push({
+          bean, roast, gear, taste,
+          temp: document.getElementById('waterTemp').textContent,
+          ratio: document.getElementById('ratio').textContent,
+          grind: document.getElementById('grind').textContent,
+          time: document.getElementById('time').textContent,
+          steps: planStepsEl.textContent,
+          radar: [...radarValues],
+          date: new Date().toLocaleDateString('zh-CN')
+        });
+        DB.save('brewHistory', brewRecords);
       } catch (err) {
         // 降级：AI 失败时使用原逻辑
         const temp = taste.includes('加奶') ? '90°C' : taste.includes('花香') ? '91°C' : '92°C';
@@ -2496,6 +2554,11 @@
           outputEl.textContent = partial;
         });
         showToast('反馈已转译');
+
+        // 保存风味转译记录
+        const translations = DB.get('translations', []);
+        translations.push({ input: text, output: outputEl.textContent, date: new Date().toLocaleDateString('zh-CN') });
+        DB.save('translations', translations);
       } catch (err) {
         outputEl.textContent = '转译失败，请稍后重试。错误：' + err.message;
         showToast('AI 转译失败');
@@ -2540,6 +2603,11 @@
       `;
       document.getElementById('beanList').prepend(card);
 
+      // 保存豆仓数据
+      const savedBeans = DB.get('beans', []);
+      savedBeans.push({ name, roastDate, grind });
+      DB.save('beans', savedBeans);
+
       document.getElementById('newBeanName').value = '';
       showToast(`已加入豆仓：${name}（${grind}）`);
     });
@@ -2568,6 +2636,11 @@
         <div class="post-actions"><button class="ghost actionBtn">我也想知道</button><button class="ghost actionBtn">收藏</button><button class="ghost answerBtn">我来回答</button></div>
       `;
       document.getElementById('pendingQuestions').prepend(card);
+
+      // 保存问题数据
+      const savedPosts = DB.get('questions', []);
+      savedPosts.push({ text: val, time: '刚刚', answers: 0 });
+      DB.save('questions', savedPosts);
 
       // 绑定新卡片上的交互
       card.querySelectorAll('.actionBtn').forEach(btn => {
@@ -3495,6 +3568,72 @@
         showToast(`已打卡：${btn.dataset.cafe}`);
       });
     });
+
+    // === 数据管理按钮事件 ===
+    document.getElementById('exportDataBtn').addEventListener('click', () => {
+      const data = DB.exportAll();
+      if (!data) return;
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const d = new Date();
+      const dateStr = d.getFullYear() + '' + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+      a.download = 'coffee-bridge-backup-' + dateStr + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('数据已导出');
+    });
+
+    document.getElementById('importDataBtn').addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          if (DB.importAll(ev.target.result)) {
+            showToast('数据已恢复，即将刷新');
+            setTimeout(() => location.reload(), 1000);
+          } else {
+            showToast('导入失败，文件格式不正确');
+          }
+        };
+        reader.readAsText(file);
+        document.body.removeChild(input);
+      });
+      input.click();
+    });
+
+    document.getElementById('resetDataBtn').addEventListener('click', () => {
+      if (confirm('确定要重置所有数据吗？此操作不可撤销。')) {
+        DB.clearAll();
+        showToast('数据已重置');
+        setTimeout(() => location.reload(), 1000);
+      }
+    });
+
+    // === 页面加载时恢复豆仓数据 ===
+    const savedBeans = DB.get('beans', []);
+    if (savedBeans.length > 0) {
+      savedBeans.forEach(b => {
+        const today = new Date();
+        const roast = new Date(b.roastDate);
+        const days = Math.floor((today - roast) / 86400000);
+        let percent, stage;
+        if (days < 7) { percent = Math.round(days/7*100); stage = '养豆期'; }
+        else if (days <= 35) { percent = 100; stage = '最佳赏味期'; }
+        else { percent = Math.max(0, 100 - (days-35)*3); stage = '衰退期'; }
+        const card = document.createElement('div');
+        card.className = 'bean-card';
+        card.innerHTML = `<div class="bean-head"><h4>${b.name}</h4><span class="tag">${b.grind}</span></div><p>烘焙日期：${b.roastDate} · 距今 ${days} 天</p><div class="progress"><i style="width:${percent}%"></i></div><div class="notice">${stage}</div>`;
+        document.getElementById('beanList').prepend(card);
+      });
+    }
   </script>
 </body>
 </html>
