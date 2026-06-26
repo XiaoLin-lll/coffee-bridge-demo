@@ -2346,7 +2346,7 @@
       if (isCustom) document.getElementById('gearCustom').focus();
     });
 
-    document.getElementById('generatePlan').addEventListener('click', () => {
+    document.getElementById('generatePlan').addEventListener('click', async function() {
       const bean = document.getElementById('beanName').value || '这支咖啡豆';
       const roast = document.getElementById('roast').value;
       const gearSelect = document.getElementById('gear').value;
@@ -2354,51 +2354,155 @@
       const gear = gearSelect === '其他（自定义）' && gearCustom ? gearCustom : gearSelect;
       const taste = document.getElementById('taste').value;
 
-      const temp = taste.includes('加奶') ? '90°C' : taste.includes('花香') ? '91°C' : '92°C';
-      const ratio = taste.includes('厚重') || taste.includes('加奶') ? '1:14' : '1:15';
-      const grind = gear.includes('法压') ? '中粗研磨' : gear.includes('意式') ? '细研磨' : '中细研磨';
-      const time = gear.includes('意式') ? '28秒' : gear.includes('法压') ? '4分钟' : '2分20秒';
+      const btn = this;
+      const planSummaryEl = document.getElementById('planSummary');
+      const planStepsEl = document.getElementById('planSteps');
 
-      document.getElementById('waterTemp').textContent = temp;
-      document.getElementById('ratio').textContent = ratio;
-      document.getElementById('grind').textContent = grind;
-      document.getElementById('time').textContent = time;
-      document.getElementById('planSummary').textContent = `${bean} 当前选择为${roast}，器具是${gear}，目标口味是“${taste}”。AI 建议先用稳定方案建立基准，再根据反馈微调。`;
-      document.getElementById('planSteps').textContent = gear.includes('意式')
-        ? '建议先锁定粉量和萃取时间，再观察液重与风味。如果酸感尖锐，可略细研磨；如果苦感明显，可缩短萃取。'
-        : '建议三段注水：闷蒸 30 秒，第二段稳定绕圈注水，第三段放慢水流拉长甜感。喝完后记录酸甜苦和余韵，系统会继续修正方案。';
+      btn.disabled = true;
+      btn.textContent = 'AI 生成中...';
+      planSummaryEl.textContent = '正在生成专属方案...';
+      planStepsEl.textContent = '';
       document.getElementById('brewResult').classList.add('show');
 
-      // 功能1: AI生成方案时自动填充雷达图
-      const defaultRadar = taste.includes('甜') ? [4, 8, 6, 7, 2, 8]
-        : taste.includes('花香') ? [7, 6, 4, 8, 2, 7]
-        : taste.includes('厚重') ? [3, 5, 8, 6, 5, 7]
-        : taste.includes('加奶') ? [3, 6, 7, 5, 4, 7]
-        : [6, 7, 5, 6, 3, 7];
-      defaultRadar.forEach((v, i) => {
-        radarValues[i] = v;
-        const slider = document.querySelector('[data-radar="' + i + '"]');
-        if (slider) {
-          slider.value = v;
-          slider.nextElementSibling.textContent = v;
-        }
-      });
-      drawRadar();
+      const systemPrompt = '你是一位世界级咖啡冲煮冠军。根据用户提供的咖啡豆信息、烘焙度、器具和口味偏好，生成一份专业的冲煮方案。要求：1）先给出方案摘要（1句话）；2）给出详细步骤指导（闷蒸、注水分段、注意事项）。用简洁专业的语言，步骤部分控制在200字以内。';
+      const userPrompt = '咖啡豆：' + bean + '\n烘焙度：' + roast + '\n器具：' + gear + '\n目标口味：' + taste + '\n请生成冲煮方案。';
 
-      showToast('AI 方案已生成');
+      try {
+        let stepsText = '';
+        await callDoubaoAI(systemPrompt, userPrompt, function(partial) {
+          stepsText = partial;
+          planStepsEl.textContent = stepsText;
+        });
+
+        // 尝试从 AI 回复中提取关键参数，提取不到则用智能默认值
+        const aiText = stepsText;
+        const tempMatch = aiText.match(/(\d{2,3})\s*[°度]?[Cc]/);
+        const ratioMatch = aiText.match(/1[:：](\d{1,2})/);
+        const timeMatch = aiText.match(/(\d+)\s*分\s*(\d+)\s*秒/) || aiText.match(/(\d+)\s*分/);
+        const grindMatch = aiText.match(/(细研磨|中细研磨|中粗研磨|粗研磨|中研磨)/);
+
+        document.getElementById('waterTemp').textContent = tempMatch ? tempMatch[1] + '°C' : (taste.includes('加奶') ? '90°C' : '92°C');
+        document.getElementById('ratio').textContent = ratioMatch ? '1:' + ratioMatch[1] : '1:15';
+        document.getElementById('grind').textContent = grindMatch ? grindMatch[1] : (gear.includes('法压') ? '中粗研磨' : '中细研磨');
+        document.getElementById('time').textContent = timeMatch ? (timeMatch[2] ? timeMatch[1] + '分' + timeMatch[2] + '秒' : timeMatch[1] + '分') : '2分20秒';
+
+        planSummaryEl.textContent = bean + ' · ' + roast + ' · ' + gear + ' · 目标"' + taste + '"';
+
+        // AI 生成方案时自动填充雷达图（基于口味偏好）
+        const defaultRadar = taste.includes('甜') ? [4, 8, 6, 7, 2, 8]
+          : taste.includes('花香') ? [7, 6, 4, 8, 2, 7]
+          : taste.includes('厚重') ? [3, 5, 8, 6, 5, 7]
+          : taste.includes('加奶') ? [3, 6, 7, 5, 4, 7]
+          : [6, 7, 5, 6, 3, 7];
+        defaultRadar.forEach(function(v, i) {
+          radarValues[i] = v;
+          const slider = document.querySelector('[data-radar="' + i + '"]');
+          if (slider) {
+            slider.value = v;
+            slider.nextElementSibling.textContent = v;
+          }
+        });
+        drawRadar();
+
+        showToast('AI 方案已生成');
+      } catch (err) {
+        // 降级：AI 失败时使用原逻辑
+        const temp = taste.includes('加奶') ? '90°C' : taste.includes('花香') ? '91°C' : '92°C';
+        const ratio = taste.includes('厚重') || taste.includes('加奶') ? '1:14' : '1:15';
+        const grind = gear.includes('法压') ? '中粗研磨' : gear.includes('意式') ? '细研磨' : '中细研磨';
+        const time = gear.includes('意式') ? '28秒' : gear.includes('法压') ? '4分钟' : '2分20秒';
+        document.getElementById('waterTemp').textContent = temp;
+        document.getElementById('ratio').textContent = ratio;
+        document.getElementById('grind').textContent = grind;
+        document.getElementById('time').textContent = time;
+        planSummaryEl.textContent = bean + ' · ' + roast + ' · ' + gear + ' · 目标"' + taste + '"（离线模式）';
+        planStepsEl.textContent = 'AI 接口暂时不可用，已使用基准方案。建议三段注水：闷蒸30秒，第二段稳定绕圈注水，第三段放慢水流拉长甜感。';
+        showToast('AI 不可用，已降级');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '生成方案';
+      }
     });
 
-    document.getElementById('homeTranslateFeedback').addEventListener('click', () => {
-      const text = document.getElementById('homeFeedbackText').value;
-      let output = 'AI 建议：';
-      if (text.includes('酸')) output += '酸感偏突出，可能需要提高水温、延长萃取或略细研磨。';
-      if (text.includes('苦')) output += '苦感偏重，建议降低水温、缩短尾段萃取或略粗研磨。';
-      if (text.includes('薄') || text.includes('淡')) output += '口感偏薄，可提高粉量、降低粉水比，或放慢第二段注水。';
-      if (text.includes('香')) output += '香气表现不错，可以保持前段注水方式，重点改善甜感和醇厚度。';
-      if (output === 'AI 建议：') output += '建议记录酸甜苦、香气、醇厚度和余韵，咖啡师可根据这些维度判断下一步调整方向。';
-      document.getElementById('homeFeedbackOutput').textContent = output;
-      document.getElementById('homeFeedbackResult').classList.add('show');
-      showToast('反馈已转译');
+    // === 豆包 AI 接口配置 ===
+    const DOUBAO_API_KEY = 'ark-1566c754-c9ca-47b9-a43e-94478d147ef6-3c232';
+    const DOUBAO_API_URL = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+    const DOUBAO_MODEL = 'doubao-1-5-pro-32k-250115';
+
+    // 通用 AI 调用函数（流式输出）
+    async function callDoubaoAI(systemPrompt, userPrompt, onChunk) {
+      const response = await fetch(DOUBAO_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + DOUBAO_API_KEY
+        },
+        body: JSON.stringify({
+          model: DOUBAO_MODEL,
+          stream: true,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('AI 接口请求失败（' + response.status + '）');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullMessage = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        chunk.split('\n').forEach(function(line) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content) {
+                fullMessage += data.choices[0].delta.content;
+                if (onChunk) onChunk(fullMessage);
+              }
+            } catch (e) {}
+          }
+        });
+      }
+      return fullMessage;
+    }
+
+    // 风味转译（首页）—— 接入真实 AI
+    document.getElementById('homeTranslateFeedback').addEventListener('click', async function() {
+      const text = document.getElementById('homeFeedbackText').value.trim();
+      if (!text) { showToast('请先输入描述'); return; }
+
+      const btn = this;
+      const outputEl = document.getElementById('homeFeedbackOutput');
+      const resultEl = document.getElementById('homeFeedbackResult');
+
+      btn.disabled = true;
+      btn.textContent = 'AI 转译中...';
+      outputEl.textContent = '正在分析...';
+      resultEl.classList.add('show');
+
+      const systemPrompt = '你是一位资深咖啡师和感官分析师。用户会用口语化的语言描述喝咖啡时的感受，你需要将其转译成专业的调整建议。要求：1）先判断可能的问题（萃取不足/过度/参数偏差）；2）给出具体的调整方向（水温、研磨度、粉水比、注水手法等）；3）用简洁专业的语言，控制在150字以内。';
+      const userPrompt = '用户描述：「' + text + '」\n请转译成专业调整建议。';
+
+      try {
+        await callDoubaoAI(systemPrompt, userPrompt, function(partial) {
+          outputEl.textContent = partial;
+        });
+        showToast('反馈已转译');
+      } catch (err) {
+        outputEl.textContent = '转译失败，请稍后重试。错误：' + err.message;
+        showToast('AI 转译失败');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '转成专业建议';
+      }
     });
 
     document.getElementById('addBean').addEventListener('click', () => {
